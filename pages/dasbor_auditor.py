@@ -1,35 +1,78 @@
 import streamlit as st
 import pandas as pd
-from Home import init_firestore # Mengimpor fungsi dari file utama
+import json
+import firebase_admin
+from firebase_admin import credentials, firestore
+import datetime
+
+# --- Fungsi Inisialisasi Firebase (Diletakkan di sini agar mandiri) ---
+@st.cache_resource
+def init_firestore():
+    try:
+        # Cek apakah secret sudah ada
+        if "FIREBASE_SERVICE_ACCOUNT" not in st.secrets:
+            return None # Akan menampilkan error di bagian login jika None
+            
+        service_account_str = st.secrets["FIREBASE_SERVICE_ACCOUNT"]
+        if not service_account_str.strip():
+            return None
+
+        key_dict = json.loads(service_account_str)
+        cred = credentials.Certificate(key_dict)
+
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        return firestore.client()
+    except Exception:
+        # Jika ada error, kembalikan None agar bisa ditangani di bagian login
+        return None
+
+db = init_firestore()
+
+# --- DATA KONTROL (Harus ada di sini juga untuk referensi judul) ---
+ALL_CONTROLS = {
+    "A.5.1": ("Kebijakan Keamanan Informasi", "Apakah organisasi telah menetapkan..."),
+    "A.5.4": ("Tanggung Jawab Manajemen", "Apakah manajemen mewajibkan..."),
+    "A.5.8": ("Keamanan Informasi dalam Manajemen Proyek", "Apakah keamanan informasi diintegrasikan..."),
+    "A.5.10": ("Penggunaan Aset yang Dapat Diterima", "Apakah aturan untuk penggunaan aset..."),
+    "A.5.12": ("Klasifikasi Informasi", "Apakah organisasi memiliki prosedur..."),
+    "A.6.2": ("Syarat dan Ketentuan Kerja", "Apakah perjanjian kontrak kerja..."),
+    "A.6.8": ("Pelaporan Peristiwa Keamanan", "Apakah mekanisme pelaporan peristiwa..."),
+    "A.7.7": ("Meja dan Layar Bersih", "Apakah kebijakan 'meja bersih' dan 'layar bersih'..."),
+    "A.8.1": ("Perangkat Titik Akhir Pengguna", "Apakah informasi yang disimpan atau diproses..."),
+    "A.8.5": ("Otentikasi Aman", "Apakah sistem mewajibkan metode otentikasi..."),
+    "A.8.7": ("Perlindungan terhadap Malware", "Apakah perlindungan terhadap malware..."),
+    "A.8.13": ("Backup Informasi", "Apakah salinan cadangan (backup)..."),
+    "A.8.15": ("Pencatatan (Logging)", "Apakah log aktivitas penting..."),
+    "A.5.35": ("Peninjauan Independen Keamanan Informasi", "Apakah pendekatan organisasi..."),
+    # (Lengkapi dengan semua 93 kontrol jika diperlukan untuk referensi judul)
+}
+
 
 st.set_page_config(layout="wide")
-db = init_firestore()
 
 def display_auditor_dashboard():
     st.title("🔍 Dasbor Auditor")
     st.markdown("Area ini khusus untuk auditor melakukan analisis risiko dan melihat rekapitulasi.")
     
-    # Fungsi untuk memuat semua submission dari auditee
     @st.cache_data(ttl=300) # Cache data selama 5 menit
-    def load_submissions():
-        if not db:
+    def load_submissions(_db): # Menggunakan _db sebagai argumen
+        if not _db:
             return []
-        submissions_ref = db.collection('auditee_submissions').stream()
+        submissions_ref = _db.collection('auditee_submissions').stream()
         submissions = [doc for doc in submissions_ref]
         return submissions
 
-    submissions = load_submissions()
+    submissions = load_submissions(db)
     
     if not submissions:
         st.warning("Belum ada data checklist yang dikirim oleh auditee.")
         return
 
-    # Tampilkan pilihan submission
     submission_options = {doc.id: f"{doc.to_dict().get('role', 'N/A')} - {doc.id}" for doc in submissions}
-    selected_submission_id = st.selectbox("Pilih Checklist untuk Dianalisis:", options=submission_options.keys(), format_func=lambda x: submission_options[x])
+    selected_submission_id = st.selectbox("Pilih Checklist untuk Dianalisis:", options=submission_options.keys(), format_func=lambda x: submission_options[x], index=None, placeholder="Pilih submission...")
 
     if selected_submission_id:
-        # Ambil data lengkap dari submission yang dipilih
         submission_data = db.collection('auditee_submissions').document(selected_submission_id).get().to_dict()
         st.header(f"Analisis untuk: {submission_data.get('role', 'N/A')}")
         st.caption(f"ID Submission: {selected_submission_id}")
@@ -39,7 +82,7 @@ def display_auditor_dashboard():
 
         for control_id, data in auditee_answers.items():
             st.markdown("---")
-            title, _ = ALL_CONTROLS[control_id]
+            title, _ = ALL_CONTROLS.get(control_id, ("Kontrol Tidak Ditemukan", ""))
             st.subheader(f"{control_id} - {title}")
 
             col1, col2 = st.columns(2)
@@ -51,25 +94,18 @@ def display_auditor_dashboard():
             
             with col2:
                 st.markdown("**Penilaian Auditor:**")
-                likelihood = st.slider("Likelihood (1-5)", 1, 5, 3, key=f"like_{control_id}")
-                impact = st.slider("Impact (1-5)", 1, 5, 3, key=f"impact_{control_id}")
+                likelihood = st.slider("Likelihood (1-5)", 1, 5, 3, key=f"like_{control_id}_{selected_submission_id}")
+                impact = st.slider("Impact (1-5)", 1, 5, 3, key=f"impact_{control_id}_{selected_submission_id}")
                 
                 skor_risiko = likelihood * impact
-                if skor_risiko >= 15:
-                    level = "Kritis"
-                elif skor_risiko >= 9:
-                    level = "Tinggi"
-                elif skor_risiko >= 4:
-                    level = "Sedang"
-                else:
-                    level = "Rendah"
+                if skor_risiko >= 15: level = "Kritis"
+                elif skor_risiko >= 9: level = "Tinggi"
+                elif skor_risiko >= 4: level = "Sedang"
+                else: level = "Rendah"
                 
                 st.metric("Skor Risiko", skor_risiko, delta=level, delta_color="inverse")
 
-            analysis_results.append({
-                'Kontrol': control_id, 'Judul': title, 'Jawaban Auditee': data.get('jawaban'), 
-                'Likelihood': likelihood, 'Impact': impact, 'Skor Risiko': skor_risiko, 'Level Risiko': level
-            })
+            analysis_results.append({'Kontrol': control_id, 'Judul': title, 'Jawaban Auditee': data.get('jawaban'), 'Likelihood': likelihood, 'Impact': impact, 'Skor Risiko': skor_risiko, 'Level Risiko': level})
         
         st.markdown("---")
         st.header("Rekapitulasi Analisis")
@@ -80,20 +116,20 @@ def display_auditor_dashboard():
 
             st.subheader("Grafik Peringkat Risiko")
             df_chart = df[df['Skor Risiko'] > 0].set_index('Kontrol')
-            if not df_chart.empty:
-                st.bar_chart(df_chart["Skor Risiko"])
+            if not df_chart.empty: st.bar_chart(df_chart["Skor Risiko"])
 
 # --- Gerbang Login untuk Auditor ---
 st.header("Login Auditor")
-password = st.text_input("Masukkan Password:", type="password")
 
-# Cek password dari st.secrets
-# Anda harus menambahkan AUDITOR_PASSWORD di secrets Anda!
-# Contoh: AUDITOR_PASSWORD = "passwordrahasia123"
-if "AUDITOR_PASSWORD" not in st.secrets:
-    st.error("Konfigurasi password auditor belum diatur di st.secrets.")
-elif password == st.secrets["AUDITOR_PASSWORD"]:
-    st.success("Login Berhasil!")
-    display_auditor_dashboard()
-elif password: # Jika input tidak kosong tapi salah
-    st.error("Password yang Anda masukkan salah.")
+if db is None:
+    st.error("Koneksi ke database gagal. Tidak dapat melanjutkan. Periksa konfigurasi secrets Anda.")
+else:
+    password = st.text_input("Masukkan Password:", type="password")
+    
+    if "AUDITOR_PASSWORD" not in st.secrets:
+        st.error("Konfigurasi password auditor belum diatur di st.secrets.")
+    elif password == st.secrets["AUDITOR_PASSWORD"]:
+        st.success("Login Berhasil!")
+        display_auditor_dashboard()
+    elif password: # Jika input tidak kosong tapi salah
+        st.error("Password yang Anda masukkan salah.")
