@@ -1,14 +1,34 @@
 import streamlit as st
 import datetime
-from Home import init_firestore # Mengimpor fungsi dari file utama
+import json
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-st.set_page_config(layout="wide")
+# --- Fungsi Inisialisasi Firebase (Diletakkan di sini agar mandiri) ---
+@st.cache_resource
+def init_firestore():
+    try:
+        if "FIREBASE_SERVICE_ACCOUNT" not in st.secrets:
+            return None
+        service_account_str = st.secrets["FIREBASE_SERVICE_ACCOUNT"]
+        if not service_account_str.strip():
+            return None
+        key_dict = json.loads(service_account_str)
+        cred = credentials.Certificate(key_dict)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        return firestore.client()
+    except Exception as e:
+        # Menampilkan error di halaman jika gagal, tapi tidak menghentikan aplikasi
+        st.error(f"Koneksi ke Firebase gagal: {e}")
+        return None
+
 db = init_firestore()
 
+st.set_page_config(layout="wide")
 st.title("📝 Formulir Checklist Keamanan Informasi")
 
-# --- DATA KONTROL ---
-# Daftar lengkap semua kontrol
+# --- DATA KONTROL (Sama seperti sebelumnya, letakkan di sini) ---
 ALL_CONTROLS = {
     "A.5.1": ("Kebijakan Keamanan Informasi", "Apakah organisasi telah menetapkan, mendokumentasikan, dan mengkomunikasikan kebijakan keamanan informasi yang disetujui manajemen puncak?"),
     "A.5.4": ("Tanggung Jawab Manajemen", "Apakah manajemen mewajibkan semua personel untuk menerapkan keamanan informasi sesuai dengan kebijakan yang ditetapkan?"),
@@ -24,11 +44,7 @@ ALL_CONTROLS = {
     "A.8.13": ("Backup Informasi", "Apakah salinan cadangan (backup) informasi penting dibuat dan diuji secara teratur?"),
     "A.8.15": ("Pencatatan (Logging)", "Apakah log aktivitas penting pada sistem dibuat dan disimpan untuk keperluan audit?"),
     "A.5.35": ("Peninjauan Independen Keamanan Informasi", "Apakah pendekatan organisasi terhadap pengelolaan keamanan informasi ditinjau secara independen secara berkala?"),
-    # ... (Lengkapi dengan semua 93 kontrol jika diperlukan)
 }
-
-# --- PETA KONTROL PER PERAN ---
-# Mendefinisikan kontrol mana yang relevan untuk setiap peran
 CONTROLS_BY_ROLE = {
     "Ketua STMKG": ["A.5.1", "A.5.4", "A.5.35"],
     "Kabag/Kadum": ["A.5.10", "A.6.2", "A.7.7"],
@@ -48,46 +64,31 @@ def save_auditee_submission(role, submission_data):
             st.balloons()
         except Exception as e:
             st.error(f"Gagal menyimpan ke database: {e}")
+    else:
+        st.error("Koneksi database tidak tersedia. Jawaban tidak dapat disimpan.")
 
 # --- TAMPILAN UTAMA HALAMAN CHECKLIST ---
+# (Sisa kode sama persis dengan sebelumnya, tidak perlu diubah)
 if 'user_role' not in st.session_state:
     st.warning("⚠️ Silakan pilih peran Anda di halaman 'Home' terlebih dahulu.")
     st.page_link("Home.py", label="Kembali ke Halaman Utama", icon="🏠")
 else:
     role = st.session_state['user_role']
     st.info(f"Anda mengisi checklist sebagai: **{role}**")
-    
-    # Ambil daftar kontrol yang relevan untuk peran ini
     relevant_control_ids = CONTROLS_BY_ROLE.get(role, [])
-    
     if not relevant_control_ids:
         st.error(f"Tidak ada checklist yang didefinisikan untuk peran '{role}'.")
     else:
-        # Gunakan form untuk mengumpulkan semua input sebelum diproses
         with st.form(key='checklist_form'):
             auditee_answers = {}
             for control_id in relevant_control_ids:
                 title, question = ALL_CONTROLS[control_id]
                 with st.expander(f"{control_id} - {title}", expanded=True):
                     st.markdown(f"**Pertanyaan:** *{question}*")
-                    jawaban = st.radio(
-                        "Status Implementasi Saat Ini:",
-                        options=["Sesuai", "Sebagian", "Tidak Sesuai", "Tidak Tahu"],
-                        key=f"jawaban_{control_id}",
-                        horizontal=True
-                    )
+                    jawaban = st.radio("Status Implementasi Saat Ini:", options=["Sesuai", "Sebagian", "Tidak Sesuai", "Tidak Tahu"], key=f"jawaban_{control_id}", horizontal=True)
                     catatan = st.text_area("Bukti atau Catatan Pendukung:", key=f"catatan_{control_id}", height=100)
-                    
                     auditee_answers[control_id] = {"jawaban": jawaban, "catatan": catatan}
-            
-            # Tombol submit di dalam form
             submitted = st.form_submit_button("Simpan Jawaban Checklist")
-
             if submitted:
-                # Siapkan data untuk disimpan
-                submission_data = {
-                    "role": role,
-                    "timestamp": datetime.datetime.now(),
-                    "answers": auditee_answers
-                }
+                submission_data = {"role": role, "timestamp": datetime.datetime.now(), "answers": auditee_answers}
                 save_auditee_submission(role, submission_data)

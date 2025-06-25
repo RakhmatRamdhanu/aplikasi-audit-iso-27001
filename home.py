@@ -40,7 +40,7 @@ st.set_page_config(
 
 # --- Konten Halaman Utama ---
 st.title("🛡️ Sistem Audit Internal ISO 27001:2022")
-st.image("https://placehold.co/600x200/003366/FFFFFF?text=Selamat+Datang+di+STMKG", use_column_width=True)
+st.image("https://placehold.co/600x200/003366/FFFFFF?text=Selamat+Datang+di+Sistem+ Audit+Internal+SMKI+STMKG", use_column_width=True)
 
 st.header("Pilih Peran Anda")
 
@@ -71,7 +71,7 @@ selected_role = st.selectbox(
 if selected_role != "--- Pilih Peran Anda ---":
     st.session_state['user_role'] = selected_role
     st.success(f"Anda telah memilih peran sebagai **{selected_role}**.")
-    st.info("👈 Silakan pilih halaman **'1_Isi_Checklist'** di sidebar sebelah kiri untuk melanjutkan.")
+    st.info("👈 Silakan pilih halaman **'Isi Checklist'** di sidebar sebelah kiri untuk melanjutkan.")
 else:
     # Hapus peran jika kembali ke pilihan default
     if 'user_role' in st.session_state:
